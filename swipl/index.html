@@ -1,2 +1,132 @@
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><title>index (swipl.index)</title><link rel="stylesheet" href="../odoc.css"/><meta charset="utf-8"/><meta name="generator" content="odoc 1.5.3"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="../highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body><div class="content"><header><nav><a href="../index.html">Up</a> – swipl</nav><h1 id="swipl-index"><a href="#swipl-index" class="anchor"></a>swipl index</h1></header></div></body></html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>index (swipl.index)</title><link rel="stylesheet" href="../odoc.css"/><meta charset="utf-8"/><meta name="generator" content="odoc 1.5.3"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="../highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body><div class="content"><header><nav><a href="../index.html">Up</a> – swipl</nav><h1 id="top"><a href="#top" class="anchor"></a>SwiPl</h1><p>Swipl is a Free Software library that provides high-level OCaml bindings to Swi-Prolog version 8.5. The aim of these bindings are to provide a safe and easy way to interact between Swi-Prolog and OCaml, with simple combinators to translate terms and send queries between the two languages.</p><pre><code class="ml">(* initialise SWIProlog *)
+let () = Swipl.initialise ()
+(* setup the prolog database with some facts *)
+let () = Swipl.load_source &quot;hello :- writeln('hello world').&quot;
+(* construct a Swipl term in OCaml *)
+let hello = Swipl.Syntax.(!&quot;hello&quot;)
+(* send the term to the Prolog engine *)
+let () = Swipl.with_ctx @@ fun ctx -&gt; Swipl.call ctx hello</code></pre><p>The rest of this page will provide a simple quick-start guide to using <a href="#top">Swipl</a> (we'll look at using it to build a type checker for the lambda calculus!). Advanced users may instead want to check out the <a href="Swipl/index.html"><span>API documentation</span></a>.</p><nav class="toc"><ul><li><a href="#writing-constraint-solvers-with-chr">Writing Constraint Solvers with CHR</a><ul><li><a href="#the-chr-solver">The CHR Solver</a></li><li><a href="#types">Types</a></li><li><a href="#encoding">Encoding</a></li><li><a href="#decoding">Decoding</a></li><li><a href="#putting-it-all-together">Putting it all together</a></li></ul></li><li><a href="#writing-a-typechecker-in-swi-prolog">Writing a Typechecker in SWI-Prolog</a><ul><li><a href="#the-lambda-calculus">The Lambda Calculus</a></li><li><a href="#prolog-type-checker">Prolog type checker</a></li><li><a href="#encoding">Encoding</a></li><li><a href="#type-variables">Type variables</a></li><li><a href="#decoding">Decoding</a></li><li><a href="#putting-it-all-together">Putting it all together</a></li></ul></li></ul></nav></header><h3 id="writing-a-typechecker-in-swi-prolog"><a href="#writing-a-typechecker-in-swi-prolog" class="anchor"></a>Writing a Typechecker in SWI-Prolog</h3><p>Before we move any further, let's make sure that the Prolog engine is initialised and ready to go (otherwise you'll get SEGFAULTs):</p><pre><code class="ml">let () = Swipl.initialise ()</code></pre><h4 id="the-lambda-calculus"><a href="#the-lambda-calculus" class="anchor"></a>The Lambda Calculus</h4><p>For this running example, we'll be looking at writing a type checker for the basic lambda calculus:</p><pre><code class="ml">type t =
+  | Lam of string * t
+  | Var of string
+  | App of t * t
+
+type ty =
+  | TyVar of string
+  | Fun of ty * ty</code></pre><p>For this example, we'll look at performing type-checking in Prolog by means of encoding the entire inference algorithm as a Prolog query (you may want to see <a href="https://mail.haskell.org/pipermail/haskell-cafe/2010-November/086016.html">this Haskell-Cafe thread</a> for some interesting discussion of doing type inference in this way).</p><h4 id="prolog-type-checker"><a href="#prolog-type-checker" class="anchor"></a>Prolog type checker</h4><p>Our (entire!) type inference algorithm can be written concisely in Prolog as follows:</p><pre><code class="ml">let () = Swipl.load_source &quot;
+typeof(Gamma, Term, Type) :-
+        atom(Term),
+        member(type(Term, Tvar), Gamma),
+        !,
+        unify_with_occurs_check(Type, Tvar).
+
+typeof(Gamma, lam(A,B), Type) :-
+        atom(A),
+        typeof([type(A, TvarA)|Gamma], B, TvarB),
+        unify_with_occurs_check(Type, fun(TvarA, TvarB)).
+
+typeof(Gamma, app(A,B), Type) :-
+        typeof(Gamma, A, TvarA),
+        unify_with_occurs_check(TvarA, fun(TvarIn, TvarOut)),
+        typeof(Gamma, B, TvarIn),
+        unify_with_occurs_check(Type, TvarOut).
+&quot;</code></pre><p>Explaining the basics of prolog is beyond the scope of this guide, but from the above predicates you should be able to roughly see how the type-inference works - the main operator of interest is the <code>typeof(Gamma,Term,Type)</code> predicate, which, given a <code>Term</code> and a typing context <code>Gamma</code>, calculates the corresponding <code>Type</code> of the term.</p><p><a href="Swipl/index.html#val-load_source"><code>Swipl.load_source</code></a> is a convenience function that allows us to send a string encoding some Prolog facts to the Prolog engine to be compiled and loaded inline. (Note: if you're loading rules from a separate file, it's probably better to load them using Prolog's <code>consult/1</code> predicate rather than this method).</p><h4 id="encoding"><a href="#encoding" class="anchor"></a>Encoding</h4><p>The <code>typeof/3</code> predicate we defined above operates over <i>Prolog terms</i> encoding the lambda calculus (i.e like <code>lam(x, lam(y, app(x,y)))</code>). As such, in order to interact between OCaml and Prolog, we'll need to write a function to map between these two encodings:</p><pre><code class="ml">encode (Lam (&quot;x&quot;, Var &quot;x&quot;)) (* ==&gt; (lam (x, x)) *)</code></pre><p>We can start by declaring some helpers to simplify the construction of these particular shapes of Prolog terms:</p><pre><code class="ml">let lam var body = Swipl.Syntax.(app (&quot;lam&quot; /@ 2) [var; body])
+let apply fn arg = Swipl.Syntax.(app (&quot;app&quot; /@ 2) [fn; arg])
+let typeof gamma term ty = Swipl.Syntax.(app (&quot;typeof&quot; /@ 3) [gamma; term; ty])</code></pre><p>In the above snippet, most of the work is done by two particular operations provided by Swipl: <code>/@</code> and <code>app</code>:</p><ul><li><code>&quot;lam&quot; /@ 2</code> corresponds to the Prolog syntax <code>lam/2</code> and declares a function symbol that takes 2 arguments;</li></ul><ul><li><code>app fn args</code> applies a function symbol to a list of terms to produce a prolog term.</li></ul><ul><li><code>! name</code> which we'll see in the next part is another similar operator that works like those above, except that it creates a Prolog atom from a given string.</li></ul><p>Putting it all together, we can now write an <code>encode</code>ing function to translate our OCaml terms into corresponding Prolog ones:</p><pre><code class="ml">let rec encode =
+  let open Swipl.Syntax in
+  function
+  | Lam (var, body) -&gt;
+    lam (!var) (encode body)
+  | Var v -&gt; !v
+  | App (fn,arg) -&gt; apply (encode fn) (encode arg)</code></pre><h4 id="type-variables"><a href="#type-variables" class="anchor"></a>Type variables</h4><p>As you may have noticed in the above code, in our encoding we will be using Prolog variables to represent polymorphic variables (rather than having atoms to do this). As such, when we're mapping from Prolog back to OCaml, we'll need some way of mapping from <i>Prolog variables</i> back to OCaml terms. To do this, we can make use of the (cheap!) ordering of terms, as follows:</p><pre><code class="ml">module TermMap = Map.Make(struct type t = Swipl.t let compare = Swipl.compare end)
+
+(* map a Prolog variable to an OCaml term *)
+let lookup (map,id) t =
+  match TermMap.find_opt t map with
+  | Some name -&gt; TyVar name, (map,id)
+  | None -&gt;
+    let name = &quot;'&quot; ^ String.init 1 (fun _ -&gt; Char.chr (97 + id)) in
+    let map = TermMap.add t name map in
+    TyVar name, (map, id+1)</code></pre><h4 id="decoding"><a href="#decoding" class="anchor"></a>Decoding</h4><p>Now that we have a way of handling type variables, we can also write a corresponding <code>decode</code>er function to map from Prolog terms back to OCaml ones:</p><pre><code class="ml">let decode ctx =
+  let (let+) x f = Option.bind x f in
+  let rec loop map t =
+    match Swipl.typeof t with
+    | `Variable -&gt; Some (lookup map t)
+    | `Term -&gt;
+      let[@warning &quot;-8&quot;] (_, [froty;toty]) = Swipl.extract_functor ctx t in
+      let+ froty, map = loop map froty in
+      let+ toty, map = loop map toty in
+      Some (Fun (froty, toty), map)
+    | _ -&gt; None in
+  loop</code></pre><p>Here, the result of our queries will be a prolog term representing the type of the expression (i.e something like <code>fun(A,fun(fun(A,B), A))</code>), so to translate that back into an OCaml term, we check whether the type of the term is either a <code>`Variable</code> (in which case we map it back to a type variable), or a compound <code>`Term</code>, in which case we extract the two arguments (using <a href="Swipl/index.html#val-extract_functor"><code>Swipl.extract_functor</code></a>) and recursively extract them as well.</p><p><b>Note</b>: unlike the previous operations, the process of extracting terms may sometimes need to introduce new Prolog variables in order to perform the extraction - as such, we need to thread through a variable context <code>ctx</code> to our decode function.</p><h4 id="putting-it-all-together"><a href="#putting-it-all-together" class="anchor"></a>Putting it all together</h4><p>Finally, with all our components assembled, we can construct a function to encapsulate all the Prolog specific aspects and provide a simple interface to other OCaml code:</p><pre><code class="ml">let typecheck term =
+  (* create a variable context for the typechecking query *)
+  Swipl.with_ctx (fun ctx -&gt;
+    (* create a fresh variable to hold the result *)
+    let result = Swipl.fresh ctx in
+    (* construct a Prolog term to represent the query  *)
+    let term = (typeof Swipl.(encode_list ctx []) (encode term) result) in
+    (* send the query to the Prolog engine *)
+    let query = Swipl.eval ctx term in
+    (* if the prolog engine found a solution, extract it *)
+    if Swipl.first_solution query
+    then decode ctx (TermMap.empty, 0) result |&gt; Option.map fst
+    else None
+  )
+(* val typecheck: t -&gt; ty option *)</code></pre><p>The beauty of this function is that it looks just like another OCaml function, taking in a term and returning a type (if the term can be assigned a type at all), but under the hood, it actually entirely uses the Prolog engine for its unification.</p><p>As <code>typecheck</code> has a normal OCaml type (encapsulating all the Prolog specific parts), we can easily use it in other OCaml programs:</p><pre><code class="ml">let () =
+  let term = Lam(&quot;x&quot;, Lam(&quot;y&quot;, App(Var &quot;x&quot;, App(Var &quot;y&quot;, Var &quot;x&quot;)))) in
+  match typecheck term with
+  | None -&gt; print_endline @@ &quot;Term does not type check&quot;
+  | Some ty -&gt; print_endline @@ &quot;Term has type &quot; ^ (show_ty ty)</code></pre><h3 id="writing-constraint-solvers-with-chr"><a href="#writing-constraint-solvers-with-chr" class="anchor"></a>Writing Constraint Solvers with CHR</h3><p><a href="https://en.wikipedia.org/wiki/Constraint_Handling_Rules">Constraint Handling Rules (CHR)</a> is a very elegant framework which comes bundled with SWI Prolog that allows users to write complex domain specific constraint solving engines in a concise declaritive way.</p><p>Before we move any further, let's make sure that the Prolog engine is initialised and ready to go (otherwise you'll get SEGFAULTs):</p><pre><code class="ml">let () = Swipl.initialise ()</code></pre><p>In this example, we'll be looking at a simple CHR system that models the interaction of <code>salt</code> and <code>water</code> in a small inventory (represented as a multi-set).</p><h4 id="the-chr-solver"><a href="#the-chr-solver" class="anchor"></a>The CHR Solver</h4><p>As before, let's load in some Prolog source code and prime the database:</p><pre><code class="ml">let () = Swipl.load_source &quot;
+:- use_module(library(chr)).
+
+:- chr_constraint salt/0, water/0, salt_water/0.
+
+salt, water &lt;=&gt; salt_water.
+
+reducesTo_(Goal, C) :-
+        call(Goal),
+        call(user:'$enumerate_constraints'(C)).
+reducesTo(Goal, Constraints) :-
+        findall(Constraint, reducesTo_(Goal, Constraint), Constraints).
+&quot;</code></pre><p>Explaining the full semantics of CHR rules is somewhat outside of the scope of this guide, but roughly the CHR constraint <code>salt, water &lt;=&gt; salt_water</code> tells Prolog to replace any occurrence of <code>salt</code> and <code>water</code> together in the inventory with <code>salt_water</code>.</p><p>Something that might be a little more unfamiliar to CHR programmers is the <code>reducesTo</code> predicate, which is a hacky meta-predicate that allows extracting the final state of the CHR store back into Prolog. Needless to say, deeply understanding the <code>reducesTo</code> predicate isn't that necassary - you can just simply add it to any CHR code that you have and then use it in anger to extract out results.</p><h4 id="types"><a href="#types" class="anchor"></a>Types</h4><p>Our domain of discourse for this little example will be a relatively simple inventory system with three kinds of entities - <code>salt</code>, <code>water</code> and <code>salt_water</code>. Our inventory will consist of a collection of these items, and our constraint solver will work out the final state of the system given some interaction rules between the entities.</p><p>As such, we can embed our domain of discourse into OCaml with the following types:</p><pre><code class="ml">type t = Salt | Water | SaltWater
+type store = t list</code></pre><h4 id="encoding"><a href="#encoding" class="anchor"></a>Encoding</h4><p>As we saw with the type checker, in order to interact with Prolog, we'll need some means of mapping OCaml terms <i>into</i> Prolog ones.</p><p>As before, we can start by defining some helpers to simplify the construction of Prolog terms:</p><pre><code class="ml">let reducesTo goal result = Swipl.Syntax.(app (&quot;reducesTo&quot; /@ 2) [goal; result])
+let salt = lazy Swipl.Syntax.(!&quot;salt&quot;)
+let water = lazy Swipl.Syntax.(!&quot;water&quot;)
+let salt_water = lazy Swipl.Syntax.(!&quot;salt_water&quot;)</code></pre><p><b>Note:</b> In the above code, for the <code>salt</code>, <code>water</code> and <code>salt_water</code> atoms, we defer their execution using <code>lazy</code> to prevent the code from SEGFAULTing if it happens that <a href="Swipl/index.html#val-initialise"><code>Swipl.initialise</code></a> has not yet been called (in this example, we've been careful to call it already, but in general you might want to structure your code to not make that assumption).</p><p>With these helpers in hand, we can now write an encoding function to map a store into a corresponding Prolog term that captures the same semantics:</p><pre><code class="ml">(* encode an entity by mapping them into corresponding prolog terms *)
+let encode v = Lazy.force @@ match v with Salt -&gt; salt | Water -&gt; water | SaltWater -&gt; salt_water
+
+(* encode a store by conjoining all the entities within it *)
+let encode ls =
+  let hd,tl = List.hd ls, List.tl ls in
+  List.fold_left Swipl.Syntax.(fun acc vl -&gt; acc &amp;&amp; encode vl) (encode hd) tl </code></pre><h4 id="decoding"><a href="#decoding" class="anchor"></a>Decoding</h4><p>Naturally, we also need a <code>decode</code>ing function to map from the Prolog output back into an OCaml term.</p><pre><code class="ml">let decode =
+  (* precompute the atoms of relevant terms *)
+  let salt = lazy (Swipl.atom &quot;salt&quot;)
+  and water = lazy (Swipl.atom &quot;water&quot;)
+  and salt_water = lazy (Swipl.atom &quot;salt_water&quot;) in
+  fun ctx t -&gt;
+  (* extract the atom in the term and then compare it to the precomputed ones *)
+  match Swipl.extract_atom ctx t with
+  | v when Swipl.equal_atom v (Lazy.force salt) -&gt; Salt
+  | v when Swipl.equal_atom v (Lazy.force water) -&gt; Water
+  | v when Swipl.equal_atom v (Lazy.force salt_water) -&gt; SaltWater
+  | v -&gt; failwith (&quot;unknown atom &quot; ^ Swipl.show_atom v)
+
+(* decode a store by decoding the entities in each element *)
+let decode ctx t =
+  let ls = Swipl.extract_list ctx t in
+  List.map (decode ctx) ls</code></pre><p>In the above code, as the terms in question are all simple atoms (unlike the typechecking example), we call extract atom and use (cheap!) comparison on atoms to map from terms back to the corresponding OCaml terms (comparison on atoms is cheaper than comparison on terms, so if you can, prefer atoms).</p><h4 id="putting-it-all-together"><a href="#putting-it-all-together" class="anchor"></a>Putting it all together</h4><p>With all our components now defined, we can finally write a simple wrapper to hook all the terms together and actually send the query to the Prolog engine and retrieve the results:</p><pre><code class="ml">let solve_constraints ls =
+  (* Create a new term variable context *)
+  Swipl.with_ctx (fun ctx -&gt;
+    (* create a term for the result *)
+    let result = Swipl.fresh ctx in    
+    (* encode the constraint store *)
+    let goal = encode ls in
+    (* send the query to the Prolog engine *)
+    Swipl.call ctx (reducesTo goal result);
+    (* extract the result *)
+    decode ctx result
+  )
+(* val solve_constraints: store -&gt; store *)</code></pre><p>In the above code <a href="Swipl/index.html#val-call"><code>Swipl.call</code></a> is another convenience function that encapsulates the process of running a query and then selecting the first solution (as we did in the Typechecking example), however, as it doesn't check whether the query has any solutions, it is primarily intended for predicates that are invoked for their side-effects, but here we'll abuse it to simplify our example.</p><p>As before, the type is simple and encapsulates all the prolog complexities, which means that you can easily include it into other OCaml programs:</p><pre><code class="ml">let () =
+  let terms = [Salt; Water; Salt; Salt; Salt; Salt; Water; Water] in
+  let term = solve_constraints terms in
+  print_endline (show_store term);</code></pre></div></body></html>
