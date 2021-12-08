@@ -13,7 +13,7 @@ let hello = Swipl.Syntax.(!"hello")
 let () = Swipl.with_ctx @@ fun ctx -> Swipl.call ctx hello
 ```
 
-Check out the Documentation page for a detailed introduction and quick start guide! 
+Check out the [Documentation page](https://gopiandcode.github.io/SWIPL-OCaml/swipl/index.html) for a detailed introduction and quick start guide! 
 
 If you know what you're doing already, then maybe check out the
 example uses under `examples/`.
