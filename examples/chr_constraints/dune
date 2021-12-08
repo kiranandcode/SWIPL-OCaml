@@ -1,3 +1,0 @@
-(executable (name constraint_solver)
- (libraries swipl)
- (preprocess (pps ppx_deriving.std)))

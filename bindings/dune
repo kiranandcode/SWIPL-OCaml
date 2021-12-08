@@ -1,5 +1,0 @@
-(library
- (name bindings)
- (public_name swipl.__private__.bindings)
- (synopsis "Ctypes bindings to describe the swipl FFI.")
- (libraries ctypes.stubs ctypes))
