@@ -3,16 +3,12 @@
  (name swipl)
  (synopsis "Bindings to SWI-Prolog for OCaml")
  (description
-   "Swipl is a set of high-level OCaml bindings to SWI Prolog 8.5, supporting easy interop between OCaml and Prolog."
- )
-
+   "Swipl are Free Software high-level OCaml bindings to SWI Prolog 8.5, supporting easy interop between OCaml and Prolog.")
  (depends
-   (ocaml (>= ~))
-   (conf-swi-prolog (>= ~))
-   (ctypes (>= ~))
-   (ppx_deriving (>= ~))
- )
-)
+   (ocaml (>= 4.08.0))
+   (conf-swi-prolog (>= 1))
+   (ctypes (>= 0.18.0))
+   (ppx_deriving (>= 2.0))))
 (generate_opam_files true)
 (license GPL-3.0+)
 (source (uri git+https://gitlab.com/gopiandcode/swipl-ocaml.git))
