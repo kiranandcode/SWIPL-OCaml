@@ -1,0 +1,2 @@
+(executable (name typechecker)
+ (libraries swipl))
