@@ -1,6 +1,6 @@
 (library
  (name swipl)
- (public_name swipl)
+ (public_name swipl.swipl)
  (libraries ctypes ctypes.foreign str bindings)
  (c_library_flags (:include c_library_flags.sexp))
  (ocamlopt_flags (-ccopt (:include ccopts.sexp)))
